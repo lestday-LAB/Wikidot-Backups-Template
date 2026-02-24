@@ -37,8 +37,8 @@ jobs:
             exit 1
           fi
 
-      # 步骤4：优化版HTTrack备份（优先核心页面）
-      - name: Optimized backup with HTTrack
+      # 步骤4：兼容版HTTrack备份（优先核心页面）
+      - name: Compatible backup with HTTrack
         run: |
           # 创建备份目录
           BACKUP_DATE=$(date +%Y%m%d)
@@ -46,7 +46,7 @@ jobs:
           BACKUP_DIR="${BACKUP_BASE_DIR}/deep-forest-club-${BACKUP_DATE}"
           mkdir -p "${BACKUP_DIR}"
           
-          # HTTrack优化配置 - 优先抓取核心页面
+          # 仅保留旧版HTTrack支持的参数，移除不兼容的--priority=1
           httrack "https://deep-forest-club.wikidot.com/system:list-all-pages" \
             -O "${BACKUP_DIR}" \
             --mirror \
@@ -57,15 +57,15 @@ jobs:
             --timeout=120 \
             --retries=5 \
             --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-            --priority=1 \
             --verbose \
             --log="${BACKUP_DIR}/httrack-log.txt"
           
           # 验证核心页面是否备份成功
-          if [ -f "${BACKUP_DIR}/deep-forest-club.wikidot.com/system:list-all-pages.html" ]; then
+          CORE_PAGE_PATH="${BACKUP_DIR}/deep-forest-club.wikidot.com/system:list-all-pages.html"
+          if [ -f "${CORE_PAGE_PATH}" ]; then
             echo "✅ Core page backup successful"
             # 显示核心页面大小，确认完整性
-            ls -lh "${BACKUP_DIR}/deep-forest-club.wikidot.com/system:list-all-pages.html"
+            ls -lh "${CORE_PAGE_PATH}"
           else
             echo "❌ Core page backup failed"
             exit 1
@@ -103,6 +103,8 @@ jobs:
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           
+          # 定义备份日期变量（修正原文件变量覆盖问题）
+          BACKUP_DATE=$(date +%Y%m%d)
           # 检查是否有新的有效备份文件
           BACKUP_FILES=$(ls -A ./website-backups/*.tar.gz 2>/dev/null)
           if [ -n "${BACKUP_FILES}" ]; then
@@ -126,11 +128,12 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BACKUP_DATE: ${{ github.run_id }}-${{ github.run_number }}
 
       # 步骤7：清理旧备份（可选，保留最近30天）
       - name: Cleanup old backups (keep last 30 days)
         run: |
+          # 确保目录存在，避免cd失败
+          mkdir -p ./website-backups
           cd ./website-backups
           # 按时间排序，删除30天前的备份
           find . -name "deep-forest-club-*.tar.gz" -type f -mtime +30 -delete
