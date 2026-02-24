@@ -1,220 +1,122 @@
-name: Website Backup with HTTrack (Fully Optimized)
+name: 备份 Deep Forest Club Wiki
 
 on:
+  # 定时触发：每天凌晨2点运行
   schedule:
-    - cron: '0 18 * * *'  # 北京时间凌晨2点
+    - cron: '0 2 * * *'
+  
+  # 允许手动触发
   workflow_dispatch:
-    inputs:
-      backup_depth:
-        description: 'Backup depth (default: 10)'
-        required: false
-        default: '10'
-        type: string
-
-permissions:
-  contents: write
-  actions: read
 
 jobs:
-  backup-website:
+  backup:
     runs-on: ubuntu-latest
-    timeout-minutes: 60  # 设置任务超时时间，避免无限运行
-    env:
-      CORE_PAGE: "https://deep-forest-club.wikidot.com/system:list-all-pages"
-      BACKUP_BASE_DIR: "./website-backups"
-      RETENTION_DAYS: 30  # 备份保留天数，统一配置
-      MIN_FILE_SIZE_KB: 100  # 最小备份文件大小阈值
-
+    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # 拉取完整历史，避免提交冲突
-
-      - name: Install dependencies
-        run: |
-          sudo apt update && sudo apt install -y httrack wget curl grep jq
-          # 验证HTTrack版本和可用参数
-          httrack --version
-          echo "✅ Dependencies installed successfully"
-
-      - name: Check core page availability (with retry)
-        uses: nick-fields/retry@v3  # 使用重试动作增强可靠性
-        with:
-          max_attempts: 3
-          retry_delay_seconds: 10
-          command: |
-            if curl --head --fail --silent --max-time 30 "$CORE_PAGE" > /dev/null; then
-              echo "✅ Core page is accessible"
-            else
-              echo "❌ Core page is not accessible"
-              exit 1
-            fi
-
-      - name: Prepare backup environment
-        run: |
-          # 定义带时间戳的备份目录（精确到分钟，避免重复）
-          BACKUP_TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          BACKUP_DIR="${BACKUP_BASE_DIR}/deep-forest-club-${BACKUP_TIMESTAMP}"
-          mkdir -p "${BACKUP_DIR}"
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 安装 HTTrack
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y httrack webhttrack
+        
+    - name: 创建备份目录
+      run: |
+        mkdir -p backups/deep-forest-club
+        mkdir -p backups/archive
+        
+    - name: 设置日期变量
+      id: date
+      run: |
+        echo "date=$(date +'%Y%m%d_%H%M%S')" >> $GITHUB_OUTPUT
+        echo "year=$(date +'%Y')" >> $GITHUB_OUTPUT
+        echo "month=$(date +'%m')" >> $GITHUB_OUTPUT
+        echo "day=$(date +'%d')" >> $GITHUB_OUTPUT
+        
+    - name: 执行 HTTrack 备份
+      run: |
+        cd backups/deep-forest-club
+        
+        # 使用 HTTrack 镜像网站
+        httrack "https://deep-forest-club.wikidot.com/" \
+          -O "./${{ steps.date.outputs.date }}" \
+          --mirror \
+          --depth=3 \
+          --max-files=0 \
+          --connection-per-second=5 \
+          --sockets=5 \
+          --retries=3 \
+          --timeout=60 \
+          --robots=0 \
+          --index \
+          --display \
+          --verbose \
+          --debug-log \
+          --continue \
+          --keep-links \
+          --can-go-up \
+          --ext-depth=0 \
+          --url-charset="UTF-8" \
+          --iso8859-1 \
+          --assume \
+          --do-not-recatch \
+          --include-query-string \
+          --http-10 \
+          --disable-security-limits \
+          --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
           
-          # 导出变量供后续步骤使用
-          echo "BACKUP_DIR=${BACKUP_DIR}" >> $GITHUB_ENV
-          echo "BACKUP_TIMESTAMP=${BACKUP_TIMESTAMP}" >> $GITHUB_ENV
-          
-          # 创建临时日志目录
-          mkdir -p "${BACKUP_BASE_DIR}/logs"
-          echo "✅ Backup environment prepared"
-
-      - name: Run HTTrack backup (optimized)
-        run: |
-          # 核心备份命令 - 优化资源和稳定性
-          httrack "$CORE_PAGE" \
-            -O "${BACKUP_DIR}" \
-            --mirror \
-            --robots=0 \
-            --depth=${{ github.event.inputs.backup_depth || env.backup_depth || 10 }} \
-            --stay-on-same-domain \
-            --keep-alive \
-            --timeout=120 \
-            --retries=5 \
-            --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-            --verbose \
-            --log="${BACKUP_DIR}/httrack-log.txt" \
-            --connection-per-second=2 \  # 限制每秒请求数，避免被封禁
-            --max-rate=500k \  # 限制下载速率，减轻服务器压力
-            -%v \  # 旧版兼容的进度显示
-            --quiet  # 减少冗余输出，只显示关键信息
-          
-          # 备份日志归档
-          cp "${BACKUP_DIR}/httrack-log.txt" "${BACKUP_BASE_DIR}/logs/httrack-${BACKUP_TIMESTAMP}.log"
-          
-          # 验证核心页面备份（兼容不同路径格式）
-          CORE_PAGE_PATHS=(
-            "${BACKUP_DIR}/deep-forest-club.wikidot.com/system:list-all-pages.html"
-            "${BACKUP_DIR}/system:list-all-pages.html"
-          )
-          CORE_PAGE_FOUND=false
-          for PATH in "${CORE_PAGE_PATHS[@]}"; do
-            if [ -f "$PATH" ]; then
-              echo "✅ Core page found at: $PATH"
-              ls -lh "$PATH"
-              CORE_PAGE_FOUND=true
-              break
-            fi
-          done
-          
-          if [ "$CORE_PAGE_FOUND" = false ]; then
-            echo "❌ Core page backup failed"
-            cat "${BACKUP_DIR}/httrack-log.txt"  # 输出日志便于排查
-            exit 1
-          fi
-          
-          # 备份统计信息
-          echo -e "\n📊 Backup Statistics:"
-          echo "Total files: $(find "${BACKUP_DIR}" -type f | wc -l)"
-          echo "Total size: $(du -sh "${BACKUP_DIR}" | awk '{print $1}')"
-
-      - name: Compress and verify backup
-        run: |
-          TAR_FILE="${BACKUP_DIR}.tar.gz"
-          
-          # 高效压缩（使用xz算法，压缩比更高）
-          tar -I 'xz -9e' -cf "${TAR_FILE}" "${BACKUP_DIR}"
-          
-          # 生成多维度校验信息
-          md5sum "${TAR_FILE}" > "${TAR_FILE}.md5"
-          sha256sum "${TAR_FILE}" > "${TAR_FILE}.sha256"
-          
-          # 验证压缩包完整性
-          if ! md5sum -c "${TAR_FILE}.md5"; then
-            echo "❌ MD5 verification failed"
-            exit 1
-          fi
-          
-          # 删除原目录，只保留压缩包和校验文件
-          rm -rf "${BACKUP_DIR}"
-          
-          echo -e "\n📁 Final Backup Files:"
-          ls -lh "${BACKUP_BASE_DIR}/" | grep -E "deep-forest-club.*\.(tar.gz|md5|sha256)"
-
-      - name: Smart commit and push
-        run: |
-          git config --global user.name "GitHub Actions Backup Bot"
-          git config --global user.email "actions+backup-bot@github.com"
-          git config --global pull.rebase false  # 避免提交冲突
-          
-          # 拉取最新代码，防止提交冲突
-          git pull origin ${{ github.ref_name }}
-          
-          BACKUP_FILE=$(ls -1 "${BACKUP_BASE_DIR}/deep-forest-club-*.tar.gz" 2>/dev/null | head -n 1)
-          
-          if [ -f "$BACKUP_FILE" ]; then
-            # 检查文件大小
-            FILE_SIZE=$(du -k "$BACKUP_FILE" | cut -f1)
-            if [ "$FILE_SIZE" -lt "$MIN_FILE_SIZE_KB" ]; then
-              echo "❌ Backup file too small (${FILE_SIZE}KB < ${MIN_FILE_SIZE_KB}KB), skipping commit"
-              exit 0
-            fi
-            
-            # 添加备份文件
-            git add "${BACKUP_BASE_DIR}/"*
-            
-            # 检查是否有变更
-            if git diff --cached --quiet; then
-              echo "ℹ️ No changes to commit"
-            else
-              # 提交并推送
-              git commit -m "✅ Backup deep-forest-club.wikidot.com (${BACKUP_TIMESTAMP})
-              - Core page: ${CORE_PAGE}
-              - Backup size: $(du -sh "$BACKUP_FILE" | awk '{print $1}')
-              - Retention: ${RETENTION_DAYS} days"
-              
-              # 安全推送（带重试）
-              for i in {1..3}; do
-                if git push; then
-                  echo "✅ Backup pushed successfully (attempt $i)"
-                  break
-                else
-                  echo "⚠️ Push failed (attempt $i), retrying in 10s..."
-                  sleep 10
-                fi
-              done
-            fi
-          else
-            echo "❌ No valid backup file found"
-            exit 1
-          fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Cleanup old backups
-        run: |
-          echo "🧹 Cleaning up backups older than ${RETENTION_DAYS} days..."
-          find "${BACKUP_BASE_DIR}" -name "deep-forest-club-*.tar.gz" -type f -mtime +"${RETENTION_DAYS}" -delete
-          find "${BACKUP_BASE_DIR}" -name "deep-forest-club-*.md5" -type f -mtime +"${RETENTION_DAYS}" -delete
-          find "${BACKUP_BASE_DIR}" -name "deep-forest-club-*.sha256" -type f -mtime +"${RETENTION_DAYS}" -delete
-          find "${BACKUP_BASE_DIR}/logs" -name "httrack-*.log" -type f -mtime +"${RETENTION_DAYS}" -delete
-          
-          # 清理空目录
-          find "${BACKUP_BASE_DIR}" -type d -empty -delete
-          
-          echo "✅ Cleanup completed. Current backups:"
-          ls -lh "${BACKUP_BASE_DIR}/" | grep -E "deep-forest-club.*\.tar.gz" || echo "  No backups found"
-
-      - name: Send notification on failure (optional)
-        if: failure()
-        run: |
-          echo "❌ Backup workflow failed! Check the logs for details."
-          # 如需添加通知（如Discord/Slack/Email），可在此处扩展
-          # 示例：curl -X POST -H "Content-Type: application/json" -d '{"content":"Backup failed for deep-forest-club.wikidot.com"}' ${{ secrets.WEBHOOK_URL }}
-
-      - name: Upload logs as artifact
-        if: always()  # 无论成功失败都上传日志
-        uses: actions/upload-artifact@v4
-        with:
-          name: backup-logs-${{ env.BACKUP_TIMESTAMP }}
-          path: |
-            ${{ env.BACKUP_BASE_DIR }}/logs/
-            ${{ env.BACKUP_DIR }}/httrack-log.txt*
-          retention-days: 7  # 日志保留7天
+        echo "备份完成: ${{ steps.date.outputs.date }}"
+        
+    - name: 压缩备份文件
+      run: |
+        cd backups/deep-forest-club
+        tar -czf "../archive/deep-forest-club-${{ steps.date.outputs.date }}.tar.gz" "./${{ steps.date.outputs.date }}"
+        
+    - name: 生成备份信息
+      run: |
+        cd backups/archive
+        echo "# 备份信息" > backup_info.md
+        echo "备份时间: ${{ steps.date.outputs.date }}" >> backup_info.md
+        echo "备份大小: $(du -sh deep-forest-club-${{ steps.date.outputs.date }}.tar.gz | cut -f1)" >> backup_info.md
+        echo "文件列表:" >> backup_info.md
+        tar -tzf deep-forest-club-${{ steps.date.outputs.date }}.tar.gz | head -20 >> backup_info.md
+        
+    - name: 提交备份到仓库
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # 只提交 archive 目录下的内容
+        git add backups/archive/deep-forest-club-*.tar.gz
+        git add backups/archive/backup_info.md
+        
+        # 检查是否有文件需要提交
+        if git diff --staged --quiet; then
+          echo "没有新的备份文件需要提交"
+        else
+          git commit -m "备份 Deep Forest Club Wiki - ${{ steps.date.outputs.date }}"
+          git push
+        fi
+        
+    - name: 清理旧备份（保留最近30天的备份）
+      run: |
+        cd backups/archive
+        # 列出所有备份文件，按时间排序，删除30天前的文件
+        find . -name "deep-forest-club-*.tar.gz" -type f -mtime +30 -delete
+        
+    - name: 上传备份文件作为工作流附件
+      uses: actions/upload-artifact@v4
+      with:
+        name: deep-forest-club-backup-${{ steps.date.outputs.date }}
+        path: backups/archive/deep-forest-club-${{ steps.date.outputs.date }}.tar.gz
+        retention-days: 30
+        
+    - name: 发送备份通知（可选）
+      if: always()
+      run: |
+        if [ ${{ job.status }} == 'success' ]; then
+          echo "✅ 备份成功完成"
+        else
+          echo "❌ 备份失败"
+        fi
