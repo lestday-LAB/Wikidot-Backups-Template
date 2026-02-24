@@ -1,8 +1,9 @@
-name: Multiple Websites Backup - Optimized
+name: Website Backup and Upload
 
 on:
   schedule:
-    - cron: '0 2 * * 0'  # 每周日凌晨2点
+    # 每周日凌晨2点运行备份（UTC时间），减少频率
+    - cron: '0 2 * * 0'
   workflow_dispatch:
     inputs:
       description:
@@ -11,34 +12,12 @@ on:
         default: 'Manual backup'
 
 env:
-  MAX_BACKUPS_PER_SITE: 5
-  DEFAULT_DEPTH: 2
-  DEFAULT_TIMEOUT: 30
-  
-  # 修复：使用正确的YAML多行字符串格式
-  SITES_CONFIG: |
-    {
-      "sites": [
-        {
-          "name": "deep-forest",
-          "url": "https://deep-forest-club.wikidot.com",
-          "folder": "backups/deep-forest",
-          "description": "深林文学部主站"
-        },
-        {
-          "name": "example-site",
-          "url": "https://example.com", 
-          "folder": "backups/example",
-          "depth": 1,
-          "timeout": 15
-        }
-      ]
-    }
+  BACKUP_DIR: 'backups'
+  MAX_BACKUPS: 10  # 保留最近10个备份
 
 jobs:
   backup:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
     
     steps:
     - name: Checkout repository
@@ -47,83 +26,38 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
         fetch-depth: 0
         
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y httrack jq
-        
-    - name: Initialize backup environment
-      run: |
-        mkdir -p temp-backups
-        echo "BACKUP_START_TIME=$(date +%s)" >> $GITHUB_ENV
-        
-    - name: Process each website
-      id: backup-sites
-      run: |
-        success_count=0
-        # 修复：使用正确的JSON解析方式
-        total_count=$(echo '$SITES_CONFIG' | jq '.sites | length')
-        
-        echo '$SITES_CONFIG' | jq -c '.sites[]' | while read site; do
-          name=$(echo "$site" | jq -r '.name')
-          url=$(echo "$site" | jq -r '.url')
-          folder=$(echo "$site" | jq -r '.folder')
-          depth=$(echo "$site" | jq -r ".depth // $DEFAULT_DEPTH")
-          timeout=$(echo "$site" | jq -r ".timeout // $DEFAULT_TIMEOUT")
-          
-          echo "🔹 开始备份: $name ($url)"
-          
-          # 创建临时目录
-          mkdir -p "temp-backups/$name"
-          
-          # 执行备份
-          if httrack "$url" \
-            -O "temp-backups/$name" \
-            -%v \
-            -r$depth \
-            -N "%h%p/%n.%t" \
-            -#L1000 \
-            --robots=0 \
-            --timeout=$timeout \
-            --retries=2; then
-            
-            # 压缩备份
-            TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-            tar -czf "backup-${name}-${TIMESTAMP}.tar.gz" "temp-backups/$name/"
-            
-            echo "✅ 备份完成: $name"
-            success_count=$((success_count + 1))
-          else
-            echo "❌ 备份失败: $name"
-          fi
-          
-          # 清理临时文件
-          rm -rf "temp-backups/$name"
-        done
-        
-        echo "success_count=$success_count" >> $GITHUB_OUTPUT
-        echo "total_count=$total_count" >> $GITHUB_OUTPUT
-        
     - name: Clean old backups
       run: |
-        # 为每个网站清理旧文件
-        echo '$SITES_CONFIG' | jq -c '.sites[]' | while read site; do
-          name=$(echo "$site" | jq -r '.name')
-          echo "清理旧备份: $name (保留最近$MAX_BACKUPS_PER_SITE个)"
-          ls -t backup-${name}-*.tar.gz 2>/dev/null | \
-            tail -n +$((MAX_BACKUPS_PER_SITE + 1)) | \
-            xargs -r rm -f
-        done
+        # 删除超过保留数量的旧备份
+        ls -t *.tar.gz | tail -n +$((MAX_BACKUPS + 1)) | xargs -r rm -f
         
-    - name: Generate backup report
-      if: always()
+    - name: Install HTTrack
       run: |
-        END_TIME=$(date +%s)
-        DURATION=$((END_TIME - BACKUP_START_TIME))
+        sudo apt-get update
+        sudo apt-get install -y httrack
         
-        echo "📊 备份报告:"
-        echo "   成功: ${{ steps.backup-sites.outputs.success_count }}/${{ steps.backup-sites.outputs.total_count }}"
-        echo "   耗时: ${DURATION}秒"
+    - name: Create backup directory
+      run: mkdir -p ${{ env.BACKUP_DIR }}
+      
+    - name: Run HTTrack backup
+      run: |
+        httrack "https://deep-forest-club.wikidot.com" \
+          -O ./${{ env.BACKUP_DIR }} \
+          -%v \
+          -r2 \
+          -N "%h%p/%n.%t" \
+          -#L1000 \
+          --robots=0 \
+          --timeout=30 \
+          --retries=3
+      timeout-minutes: 30
+      
+    - name: Compress backup
+      run: |
+        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+        tar -czf "backup-${TIMESTAMP}.tar.gz" ${{ env.BACKUP_DIR }}/
+        rm -rf ${{ env.BACKUP_DIR }}
+        echo "BACKUP_FILE=backup-${TIMESTAMP}.tar.gz" >> $GITHUB_ENV
         
     - name: Configure Git
       run: |
@@ -140,9 +74,9 @@ jobs:
           echo "has_changes=false" >> $GITHUB_OUTPUT
         fi
         
-    - name: Commit and push backups
+    - name: Commit and push backup
       if: steps.changes.outputs.has_changes == 'true'
       run: |
         git add *.tar.gz
-        git commit -m "🔧 Multi-site backup: ${{ github.event.inputs.description || 'Automated backup' }} [skip ci]"
+        git commit -m "🔧 Backup: ${{ github.event.inputs.description || 'Automated backup' }} [skip ci]"
         git push origin main
