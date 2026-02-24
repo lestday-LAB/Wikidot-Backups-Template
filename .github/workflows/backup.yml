@@ -54,7 +54,6 @@ jobs:
             --stay-on-same-domain \
             --robots=0 \
             --verbose \
-            --structure-type=0
         
         echo "备份完成，保存在: $BACKUP_DIR"
         
