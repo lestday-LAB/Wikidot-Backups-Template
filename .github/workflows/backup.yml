@@ -128,7 +128,7 @@ jobs:
         if git diff --staged --quiet; then
           echo "没有新的备份文件需要提交"
         else
-          git commit -m "备份 Deep Forest Club Wiki - ${{ steps.date.outputs.date }}"
+          git commit -m "自动备份网站 - ${{ steps.date.outputs.date }}"
           git pull origin master
           git push origin master
         fi
