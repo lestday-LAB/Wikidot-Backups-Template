@@ -50,6 +50,7 @@ jobs:
         # 简单的 httrack 命令，避免复杂参数
         httrack "https://deep-forest-club.wikidot.com/system:list-all-pages" -O "$BACKUP_DIR" \
             --mirror \
+            --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
             --depth=3 \
             --stay-on-same-domain \
             --robots=0 \
