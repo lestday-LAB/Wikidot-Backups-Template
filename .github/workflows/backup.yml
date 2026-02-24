@@ -1,111 +1,140 @@
-name: Website Backup and Upload
+name: Website Backup with HTTrack (Optimized)
 
+# 触发条件：每天凌晨2点执行，也支持手动触发
 on:
   schedule:
-    # 每周日凌晨2点运行备份（UTC时间）
-    - cron: '0 2 * * 0'
-  workflow_dispatch:
-    inputs:
-      description:
-        description: '手动备份描述'
-        required: false
-        default: 'Manual backup'
+    # cron 表达式：分 时 日 月 周 (UTC时间，北京时间需要+8小时)
+    - cron: '0 18 * * *'  # 对应北京时间凌晨2点
+  workflow_dispatch:  # 允许手动触发
 
-env:
-  BACKUP_DIR: 'backups'
-  MAX_BACKUPS: 10
-  WEBSITE_URL: 'https://deep-forest-club.wikidot.com'
-  RETENTION_DAYS: 30  # 额外按时间保留30天内的备份
+# 设置权限
+permissions:
+  contents: write  # 允许推送代码到仓库
 
 jobs:
-  backup:
+  backup-website:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        fetch-depth: 0
-        # 修复稀疏检出配置
-        sparse-checkout: |
-          !backup-*.tar.gz
-        sparse-checkout-cone-mode: false
-        sparse-checkout-skip-checks: true
-        
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y httrack pv  # 添加进度显示工具
-        
-    - name: Create backup directory
-      run: mkdir -p ${{ env.BACKUP_DIR }}
-      
-    - name: Run HTTrack backup with enhanced settings
-      run: |
-        httrack "${{ env.WEBSITE_URL }}" \
-          -O ./${{ env.BACKUP_DIR }} \
-          -%v \
-          -r2 \
-          -N "%h%p/%n.%t" \
-          -#L1000 \
-          --robots=0 \
-          --timeout=60 \
-          --retries=5 \
-          --keep-alive \
-          --connection-per-second=1 \
-          --max-rate=500000 \
-          --user-agent="Mozilla/5.0 (compatible; HTTrack/3.0; +https://www.httrack.com)"
-      timeout-minutes: 120
-      env:
-        # 避免内存溢出
-        HTTRACK_MAX_MEMORY: 512M
-        
-    - name: Compress backup with progress
-      run: |
-        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-        BACKUP_FILE="backup-${TIMESTAMP}.tar.gz"
-        # 使用pv显示压缩进度
-        tar -cf - ${{ env.BACKUP_DIR }}/ | pv -s $(du -sb ${{ env.BACKUP_DIR }}/ | cut -f1) | gzip > "${BACKUP_FILE}"
-        rm -rf ${{ env.BACKUP_DIR }}
-        echo "BACKUP_FILE=${BACKUP_FILE}" >> $GITHUB_ENV
-        
-    - name: Clean old backups (count-based)
-      run: |
-        # 保留最新的N个备份
-        ls -t backup-*.tar.gz 2>/dev/null | tail -n +$(({{ env.MAX_BACKUPS }} + 1)) | xargs -r rm -f
-        
-    - name: Clean old backups (time-based)
-      run: |
-        # 额外保留30天内的备份
-        find . -name "backup-*.tar.gz" -mtime +{{ env.RETENTION_DAYS }} -delete 2>/dev/null || true
-        
-    - name: Configure Git
-      run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@users.noreply.github.com"
-        
-    - name: Check for backup changes
-      id: changes
-      run: |
-        if git status --porcelain | grep -q ".tar.gz"; then
-          echo "has_changes=true" >> $GITHUB_OUTPUT
-          echo "changes_count=$(git status --porcelain | grep -c '.tar.gz')" >> $GITHUB_OUTPUT
-        else
-          echo "has_changes=false" >> $GITHUB_OUTPUT
-        fi
-        
-    - name: Commit and push backup
-      if: steps.changes.outputs.has_changes == 'true'
-      run: |
-        git add *.tar.gz
-        git commit -m "🔧 Backup: ${{ github.event.inputs.description || 'Automated backup' }} [skip ci]"
-        # 使用force-with-lease安全推送
-        git push --force-with-lease origin ${{ github.ref_name }}
-        
-    - name: Upload backup to artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: website-backup-${{ github.run_id }}
-        path: backup-*.tar.gz
-        retention-days: 7
+      # 步骤1：检出仓库代码
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 步骤2：安装HTTrack和依赖工具
+      - name: Install HTTrack and tools
+        run: |
+          sudo apt update
+          sudo apt install -y httrack wget curl grep
+
+      # 步骤3：预检查核心页面可用性
+      - name: Check core page availability
+        run: |
+          CORE_PAGE="https://deep-forest-club.wikidot.com/system:list-all-pages"
+          # 检查页面是否可访问
+          if curl --head --fail --silent "$CORE_PAGE" > /dev/null; then
+            echo "✅ Core page is accessible"
+          else
+            echo "❌ Core page is not accessible, exiting"
+            exit 1
+          fi
+
+      # 步骤4：优化版HTTrack备份（优先核心页面）
+      - name: Optimized backup with HTTrack
+        run: |
+          # 创建备份目录
+          BACKUP_DATE=$(date +%Y%m%d)
+          BACKUP_BASE_DIR="./website-backups"
+          BACKUP_DIR="${BACKUP_BASE_DIR}/deep-forest-club-${BACKUP_DATE}"
+          mkdir -p "${BACKUP_DIR}"
+          
+          # HTTrack优化配置 - 优先抓取核心页面
+          httrack "https://deep-forest-club.wikidot.com/system:list-all-pages" \
+            -O "${BACKUP_DIR}" \
+            --mirror \
+            --robots=0 \
+            --depth=10 \
+            --stay-on-same-domain \
+            --stay-on-same-server \
+            --keep-alive \
+            --timeout=120 \
+            --retries=5 \
+            --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+            --priority=1 \
+            --scan-level=3 \
+            --verbose \
+            --log="${BACKUP_DIR}/httrack-log.txt"
+          
+          # 验证核心页面是否备份成功
+          if [ -f "${BACKUP_DIR}/deep-forest-club.wikidot.com/system:list-all-pages.html" ]; then
+            echo "✅ Core page backup successful"
+            # 显示核心页面大小，确认完整性
+            ls -lh "${BACKUP_DIR}/deep-forest-club.wikidot.com/system:list-all-pages.html"
+          else
+            echo "❌ Core page backup failed"
+            exit 1
+          fi
+          
+          # 查看备份概览
+          echo "📊 Backup summary:"
+          ls -la "${BACKUP_DIR}/" | wc -l
+          du -sh "${BACKUP_DIR}"
+
+      # 步骤5：压缩备份文件（带校验）
+      - name: Compress and verify backup
+        run: |
+          BACKUP_DATE=$(date +%Y%m%d)
+          BACKUP_DIR="./website-backups/deep-forest-club-${BACKUP_DATE}"
+          TAR_FILE="${BACKUP_DIR}.tar.gz"
+          
+          # 压缩并计算MD5
+          tar -zcvf "${TAR_FILE}" "${BACKUP_DIR}"
+          md5sum "${TAR_FILE}" > "${TAR_FILE}.md5"
+          
+          # 验证压缩包
+          md5sum -c "${TAR_FILE}.md5"
+          
+          # 删除原目录，只保留压缩包和校验文件
+          rm -rf "${BACKUP_DIR}"
+          
+          # 显示最终文件
+          echo "📁 Final backup files:"
+          ls -la ./website-backups/
+
+      # 步骤6：智能提交（只在文件有变化时提交）
+      - name: Smart commit and push
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          
+          # 检查是否有新的有效备份文件
+          BACKUP_FILES=$(ls -A ./website-backups/*.tar.gz 2>/dev/null)
+          if [ -n "${BACKUP_FILES}" ]; then
+            # 检查文件大小（排除空文件）
+            FILE_SIZE=$(du -k "${BACKUP_FILES}" | cut -f1)
+            if [ "${FILE_SIZE}" -gt 100 ]; then  # 至少100KB才提交
+              git add ./website-backups/*
+              # 检查是否有实际变更
+              if git diff --cached --quiet; then
+                echo "ℹ️ No changes to commit"
+              else
+                git commit -m "Backup deep-forest-club.wikidot.com (core: system:list-all-pages) ${BACKUP_DATE}"
+                git push
+                echo "✅ Backup pushed successfully"
+              fi
+            else
+              echo "❌ Backup file too small (${FILE_SIZE}KB), skipping commit"
+            fi
+          else
+            echo "❌ No backup files found"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BACKUP_DATE: ${{ github.run_id }}-${{ github.run_number }}
+
+      # 步骤7：清理旧备份（可选，保留最近30天）
+      - name: Cleanup old backups (keep last 30 days)
+        run: |
+          cd ./website-backups
+          # 按时间排序，删除30天前的备份
+          find . -name "deep-forest-club-*.tar.gz" -type f -mtime +30 -delete
+          find . -name "deep-forest-club-*.md5" -type f -mtime +30 -delete
+          echo "🧹 Old backups cleaned up"
