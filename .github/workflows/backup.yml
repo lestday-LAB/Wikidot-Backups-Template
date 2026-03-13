@@ -1,8 +1,10 @@
+# 请自行填入部分信息
+
 name: 自动备份网站
 
 on:
-  schedule:
-    - cron: '0 4 */3 * *'  
+  # schedule:
+  #  - cron: '0 4 */3 * *'  # 每隔3天凌晨4点运行一次
   workflow_dispatch:
 
 jobs:
@@ -35,12 +37,12 @@ jobs:
         
     - name: 执行 HTTrack 备份
       run: |
-        BACKUP_DIR="/tmp/httrack-backup/deep-forest-club-${{ steps.date.outputs.date }}"
+        BACKUP_DIR="/tmp/httrack-backup/[填入网站名称]-${{ steps.date.outputs.date }}"
         mkdir -p "$BACKUP_DIR"
         
         cd /tmp/httrack-backup
         
-        httrack "https://deep-forest-club.wikidot.com/system:list-all-pages" -O "$BACKUP_DIR" \
+        httrack "https://[填入网站名称].wikidot.com/system:list-all-pages" -O "$BACKUP_DIR" \
             --mirror \
             --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
             --depth=3 \
@@ -52,7 +54,7 @@ jobs:
         
     - name: 检查备份是否成功
       run: |
-        BACKUP_DIR="/tmp/httrack-backup/deep-forest-club-${{ steps.date.outputs.date }}"
+        BACKUP_DIR="/tmp/httrack-backup/[填入网站名称]-${{ steps.date.outputs.date }}"
         
         if [ -d "$BACKUP_DIR" ] && [ "$(ls -A $BACKUP_DIR)" ]; then
           echo "备份成功，目录不为空"
@@ -65,7 +67,7 @@ jobs:
     - name: 压缩备份文件
       run: |
         cd /tmp/httrack-backup
-        BACKUP_NAME="deep-forest-club-${{ steps.date.outputs.date }}"
+        BACKUP_NAME="[填入网站名称]-${{ steps.date.outputs.date }}"
         
         # 压缩备份
         tar -czf "$GITHUB_WORKSPACE/backups/${BACKUP_NAME}.tar.gz" "$BACKUP_NAME"
@@ -75,7 +77,7 @@ jobs:
     - name: 生成备份信息
       run: |
         cd $GITHUB_WORKSPACE/backups
-        BACKUP_FILE="deep-forest-club-${{ steps.date.outputs.date }}.tar.gz"
+        BACKUP_FILE="[填入网站名称]-${{ steps.date.outputs.date }}.tar.gz"
         
         cat > backup_info_${{ steps.date.outputs.date }}.md << EOF
         # 备份信息
@@ -83,7 +85,7 @@ jobs:
         - **备份时间**: ${{ steps.date.outputs.date }}
         - **备份文件**: ${BACKUP_FILE}
         - **备份大小**: $(du -h ${BACKUP_FILE} | cut -f1)
-        - **网站**: https://deep-forest-club.wikidot.com/
+        - **网站**: https://[填入网站名称].wikidot.com/
         
         ## 文件列表
         
@@ -100,8 +102,8 @@ jobs:
         # 删除旧的软链接
         rm -f latest-backup.tar.gz latest-backup-info.md
         # 创建新的软链接
-        ln -s "deep-forest-club-${{ steps.date.outputs.date }}.tar.gz" "latest-backup.tar.gz"
-        ln -s "backup_info_${{ steps.date.outputs.date }}.md" "latest-backup-info.md"
+        ln -s "[填入网站名称]-${{ steps.date.outputs.date }}.tar.gz" "latest-backup"
+        ln -s "backup_info_${{ steps.date.outputs.date }}.md" "latest-backup-info"
         
     - name: 提交备份到仓库
       run: |
@@ -125,7 +127,7 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/backups
         # 删除30天前的备份文件
-        find . -name "deep-forest-club-*.tar.gz" -type f -mtime +30 -delete
+        find . -name "[填入网站名称]-*.tar.gz" -type f -mtime +30 -delete
         # 删除30天前的信息文件
         find . -name "backup_info_*.md" -type f -mtime +30 -delete
         # 删除30天前的软链接（但保留latest链接）
@@ -134,8 +136,8 @@ jobs:
     - name: 上传备份文件作为工作流附件
       uses: actions/upload-artifact@v4
       with:
-        name: deep-forest-club-backup-${{ steps.date.outputs.date }}
-        path: backups/deep-forest-club-${{ steps.date.outputs.date }}.tar.gz
+        name: [填入网站名称]-backup-${{ steps.date.outputs.date }}
+        path: backups/[填入网站名称]-${{ steps.date.outputs.date }}.tar.gz
         retention-days: 30
         
     - name: 清理临时文件
@@ -147,7 +149,7 @@ jobs:
       run: |
         if [ "${{ job.status }}" == "success" ]; then
           echo "::notice::✅ 备份成功完成 - ${{ steps.date.outputs.date }}"
-          echo "备份文件: deep-forest-club-${{ steps.date.outputs.date }}.tar.gz"
+          echo "备份文件: [填入网站名称]-${{ steps.date.outputs.date }}.tar.gz"
         else
           echo "::error::❌ 备份失败 - ${{ steps.date.outputs.date }}"
         fi
